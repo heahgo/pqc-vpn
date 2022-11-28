@@ -10,8 +10,8 @@
 #include <pcap.h>
 
 #define print_log() printf("filename : %s,    function : %s,    line : %d\n", __FILE__, __FUNCTION__, __LINE__)
-#define IP "192.168.0.3"
-#define PORT 12345
+#define IP "192.168.35.65" // server ip add
+#define PORT 12345  // server port number
 
 typedef struct ether_header
 {
@@ -78,7 +78,7 @@ int main()
         }
 
         // eth
-        // ETH_HEAD *eth = (ETH_HEAD *)packet;
+        ETH_HEAD *eth = (ETH_HEAD *)packet;
         // ip
         struct ip *iphdr = (struct ip *)(packet + sizeof(ETH_HEAD));
         uint16_t ip_total_len = ntohs(iphdr->ip_len);
@@ -88,20 +88,36 @@ int main()
         uint8_t udp_head_len = 8;
         // dhcp
         struct dhcp *dphdr = (struct dhcp *)(packet + sizeof(ETH_HEAD) + ip_head_len + udp_head_len);
-       
+
         int broad_sock;
         int bcast = 1;
-        broad_sock = socket(AF_INET, SOCK_DGRAM, 0);    // udp로 보내면 잘되는데 rawsock으로 하면 브로드캐스트가 안됨, clnt에서 dhcp패킷을 이상하게 보낸거일수도?
+        // broad_sock = socket(AF_INET, SOCK_DGRAM, 0); // udp로 보내면 잘되는데 rawsock으로 하면 브로드캐스트가 안됨, clnt에서 dhcp패킷을 이상하게 보낸거일수도?
         // broad_sock = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
-        setsockopt( broad_sock, SOL_SOCKET, SO_BROADCAST, (char*)&bcast, sizeof(bcast) );   //브로드캐스트 옵션
+        setsockopt(broad_sock, SOL_SOCKET, SO_BROADCAST, (char *)&bcast, sizeof(bcast)); //브로드캐스트 옵션
         // setsockopt(broad_sock, IPPROTO_IP, IP_HDRINCL, (void *)&bcast, sizeof(bcast));
         memset(&serv_addr, 0, sizeof(serv_addr));
         broad_addr.sin_family = AF_INET;
-        broad_addr.sin_addr.s_addr = htonl( INADDR_BROADCAST );
+        broad_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
         broad_addr.sin_port = htons(udp->uh_sport);
+
+        // dhcp packet 0x800 : ipv4, 17 : udp, 68 : dhcp client
+        if (ntohs(eth->type) != 0x800 || iphdr->ip_p != 17 || ntohs(udp->uh_sport) != 68)
+            continue;
+
+        if (dphdr->dp_options[4] != 53 || dphdr->dp_options[6] != DHCPDISCOVER) // dhcp discover인지 확인
+        {
+            continue;
+        }
+        //send packet
         sendto(broad_sock, packet, sizeof(ETH_HEAD) + ip_total_len, 0, (struct sockaddr *)&broad_addr, sizeof(broad_addr));
-        printf("sendto\n");
-        // write(clnt_sock, packet, sizeof(ETH_HEAD) + ip_total_len);
+
+        printf("\nsrc mac: %02x:%02x:%02x:%02x:%02x:%02x   ", eth->src[0], eth->src[1], eth->src[2], eth->src[3], eth->src[4], eth->src[5]);
+        printf("dst mac: %02x:%02x:%02x:%02x:%02x:%02x \n", eth->dst[0], eth->dst[1], eth->dst[2], eth->dst[3], eth->dst[4], eth->dst[5]);
+        printf("src ip : %s     ", inet_ntoa(iphdr->ip_src));
+        printf("dst ip : %s \n", inet_ntoa(iphdr->ip_dst));
+        printf("src port : %hu   dst port : %hu\n\n", ntohs(udp->uh_sport), ntohs(udp->uh_dport));
+        
+        printf("this packet dhcp discover!!\n");
     }
     printf("close\n");
     close(serv_sock);
