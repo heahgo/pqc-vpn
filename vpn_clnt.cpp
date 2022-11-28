@@ -2,11 +2,14 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <unistd.h>
 #include <sys/socket.h>
 #include "dhcp/dhcp.h"
 #include <netinet/tcp.h>
-#include <unistd.h>
 #include <pcap.h>
+
+#define IP "192.168.35.65"
+#define PORT 12345
 
 typedef struct ether_header
 {
@@ -69,8 +72,8 @@ int main(int argc, char *argv[])
 
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    serv_addr.sin_port = htons(3000);
+    serv_addr.sin_addr.s_addr = inet_addr(IP);
+    serv_addr.sin_port = htons(PORT);
 
     if (connect(clnt_sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) == -1)
         return 0;
@@ -107,7 +110,7 @@ int main(int argc, char *argv[])
         // option
         // Magic Cookie (dp_optinons[0] ~[3]) = { 0x63, 0x82, 0x53, 0x63 }
         // dhcp discover
-        if (dphdr->dp_options[4] != 53 || dphdr->dp_options[6] != DHCPDISCOVER)
+        if (dphdr->dp_options[4] != 53 || dphdr->dp_options[6] != DHCPDISCOVER) //dhcp discover인지 확인
         {
             continue;            
         }
@@ -115,7 +118,7 @@ int main(int argc, char *argv[])
         printPacket(eth, iphdr, udp);
         // printf("%d\n", sizeof(ETH_HEAD) + ip_total_len);
         getchar();
-        write(clnt_sock, packet, sizeof(ETH_HEAD) + ip_total_len);       
+        write(clnt_sock, packet, sizeof(ETH_HEAD) + ip_total_len);     // 캡쳐한 dhcp패킷 보냄 
 
     }
     pcap_close(pcap);
