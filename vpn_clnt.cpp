@@ -5,18 +5,12 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include "dhcp/dhcp.h"
-#include <netinet/tcp.h>
+#include <errno.h>
+#include <net/ethernet.h>
 #include <pcap.h>
 
 #define IP "192.168.35.65"
 #define PORT 12345
-
-typedef struct ether_header
-{
-    uint8_t dst[6];
-    uint8_t src[6];
-    uint16_t type;
-} ETH_HEAD;
 
 void usage()
 {
@@ -43,13 +37,20 @@ bool parse(Param *param, int argc, char *argv[])
     return true;
 }
 
-void printPacket(ETH_HEAD *eth, struct ip *iphdr, struct udphdr *udp)
+void printPacket(struct ether_header *eth, struct ip *iphdr, struct udphdr *udp)
 {
-    printf("\nsrc mac: %02x:%02x:%02x:%02x:%02x:%02x   ", eth->src[0], eth->src[1], eth->src[2], eth->src[3], eth->src[4], eth->src[5]);
-    printf("dst mac: %02x:%02x:%02x:%02x:%02x:%02x \n", eth->dst[0], eth->dst[1], eth->dst[2], eth->dst[3], eth->dst[4], eth->dst[5]);
+    printf("\nsrc mac: %02x:%02x:%02x:%02x:%02x:%02x   ", eth->ether_shost[0], eth->ether_shost[1], eth->ether_shost[2], eth->ether_shost[3], eth->ether_shost[4], eth->ether_shost[5]);
+    printf("dst mac: %02x:%02x:%02x:%02x:%02x:%02x \n", eth->ether_dhost[0], eth->ether_dhost[1], eth->ether_dhost[2], eth->ether_dhost[3], eth->ether_dhost[4], eth->ether_dhost[5]);
     printf("src ip : %s     ", inet_ntoa(iphdr->ip_src));
     printf("dst ip : %s \n", inet_ntoa(iphdr->ip_dst));
     printf("src port : %hu   dst port : %hu\n\n", ntohs(udp->uh_sport), ntohs(udp->uh_dport));
+}
+
+void errHandle(const char *file, const char *func, int line)
+{
+    printf("filename : %s,    function : %s,    line : %d\n", file, func, line);
+    printf("error: %s\n", strerror(errno));
+    exit(0);
 }
 
 int main(int argc, char *argv[])
@@ -69,6 +70,8 @@ int main(int argc, char *argv[])
     struct sockaddr_in serv_addr;
 
     clnt_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (clnt_sock < 0)
+        errHandle(__FILE__, __FUNCTION__, __LINE__);
 
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
@@ -76,7 +79,7 @@ int main(int argc, char *argv[])
     serv_addr.sin_port = htons(PORT);
 
     if (connect(clnt_sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) == -1)
-        return 0;
+        errHandle(__FILE__, __FUNCTION__, __LINE__);
 
     while (true)
     {
@@ -92,34 +95,36 @@ int main(int argc, char *argv[])
         }
 
         // eth
-        ETH_HEAD *eth = (ETH_HEAD *)packet;
+        struct ether_header *eth = (struct ether_header *)packet;
         // ip
-        struct ip *iphdr = (struct ip *)(packet + sizeof(ETH_HEAD));           
+        struct ip *iphdr = (struct ip *)(packet + sizeof(struct ether_header));
         uint16_t ip_total_len = ntohs(iphdr->ip_len);
         uint8_t ip_head_len = (iphdr->ip_hl) * 4;
         // udp
-        struct udphdr *udp = (struct udphdr *)(packet + sizeof(ETH_HEAD) + ip_head_len);
+        struct udphdr *udp = (struct udphdr *)(packet + sizeof(struct ether_header) + ip_head_len);
         uint8_t udp_head_len = 8;
         // dhcp
-        struct dhcp *dphdr = (struct dhcp *)(packet + sizeof(ETH_HEAD) + ip_head_len + udp_head_len);
+        struct dhcp *dphdr = (struct dhcp *)(packet + sizeof(struct ether_header) + ip_head_len + udp_head_len);
 
         // dhcp packet 0x800 : ipv4, 17 : udp, 68 : dhcp client
-        if (ntohs(eth->type) != 0x800 || iphdr->ip_p != 17 || ntohs(udp->uh_sport) != 68)
+        if (ntohs(eth->ether_type) != 0x800 || iphdr->ip_p != 17 || ntohs(udp->uh_sport) != 68)
             continue;
 
         // option
         // Magic Cookie (dp_optinons[0] ~[3]) = { 0x63, 0x82, 0x53, 0x63 }
         // dhcp discover
-        if (dphdr->dp_options[4] != 53 || dphdr->dp_options[6] != DHCPDISCOVER) //dhcp discover인지 확인
+        if (dphdr->dp_options[4] != 53 || dphdr->dp_options[6] != DHCPDISCOVER) // dhcp discover인지 확인
         {
-            continue;            
+            continue;
         }
 
-        printPacket(eth, iphdr, udp);
-        // printf("%d\n", sizeof(ETH_HEAD) + ip_total_len);
         getchar();
-        write(clnt_sock, packet, sizeof(ETH_HEAD) + ip_total_len);     // 캡쳐한 dhcp패킷 보냄 
+        int res2 = write(clnt_sock, packet, sizeof(struct ether_header) + ip_total_len); // 캡쳐한 dhcp패킷 보냄
+        if (res2 < 0)
+            errHandle(__FILE__, __FUNCTION__, __LINE__);
 
+        printPacket(eth, iphdr, udp);
+        printf("this packet dhcp discover!!\nxid : %x\n", ntohl(dphdr->dp_xid));
     }
     pcap_close(pcap);
 }
